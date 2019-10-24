@@ -22,6 +22,10 @@ func main() {
 
 	var parts []string
 	for _, f := range files {
+		if strings.ToLower(filepath.Ext(f.Name())) != ".mp3" {
+			continue
+		}
+
 		parts = append(parts, audioBook+f.Name())
 	}
 
