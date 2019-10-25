@@ -3,30 +3,35 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 )
 
 func main() {
 	audioBook := os.Args[1]
-	fmt.Println(audioBook)
+	log.Printf("Audiobook: %s\n\n", audioBook)
 
 	audioBookName := filepath.Base(audioBook)
 
-	files, err := ioutil.ReadDir(audioBook)
+	parts, err := getParts(audioBook, "files")
 	if err != nil {
-		fmt.Println(err)
+		log.Fatalln("Failed to get audiobook parts", err)
 	}
 
-	var parts []string
-	for _, f := range files {
-		if strings.ToLower(filepath.Ext(f.Name())) != ".mp3" {
-			continue
-		}
+	partsDirs, err := getParts(audioBook, "dirs")
+	if err != nil {
+		log.Fatalln("Failed to get audiobook parts", err)
+	} else {
+		parts = append(parts, partsDirs...)
+	}
 
-		parts = append(parts, audioBook+f.Name())
+	log.Println("Files order:")
+	for _, p := range parts {
+		fmt.Println(p)
 	}
 
 	joinCmd := exec.Command("ffmpeg", "-i", "concat:"+strings.Join(parts, "|"), "-acodec", "copy", audioBookName+".mp3")
@@ -34,26 +39,59 @@ func main() {
 	joinCmd.Stderr = os.Stderr
 
 	err = joinCmd.Run()
+
+	defer func() {
+		err = os.Remove(audioBookName + ".mp3")
+		if err != nil {
+			log.Fatalln("Failed to remove mp3", err)
+		}
+	}()
+
 	if err != nil {
-		fmt.Println(err)
+		log.Fatalln("Failed to concat mp3", err)
 	}
 
-	convertCmd := exec.Command("ffmpeg", "-i", audioBookName+".mp3", "-c:a", "aac", audioBookName+".m4b")
+	convertCmd := exec.Command("ffmpeg", "-i", audioBookName+".mp3", "-vn", "-c:a", "aac", audioBookName+".m4b")
 	convertCmd.Stdout = os.Stdout
 	convertCmd.Stderr = os.Stderr
 
 	err = convertCmd.Run()
 	if err != nil {
-		fmt.Println(err)
+		err = os.Remove(audioBookName + ".m4b")
+		if err != nil {
+			log.Fatalln("Failed to remove corrupt m4b", err)
+		}
+
+		log.Fatalln("Failed to convert m4b", err)
+	}
+}
+
+func getParts(dir string, objType string) ([]string, error) {
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return nil, err
 	}
 
-	err = os.Remove(audioBookName + ".mp3")
-	if err != nil {
-		fmt.Println(err)
+	var parts []string
+	for _, f := range files {
+		if objType != "dirs" && !f.IsDir() && strings.ToLower(filepath.Ext(f.Name())) == ".mp3" {
+			parts = append(parts, path.Join(dir, f.Name()))
+		} else if objType == "dirs" && f.IsDir() {
+			subParts, err := getParts(path.Join(dir, f.Name()), "files")
+			if err != nil {
+				return nil, err
+			}
+
+			subPartsDirs, err := getParts(path.Join(dir, f.Name()), "dirs")
+			if err != nil {
+				return nil, err
+			} else {
+				subParts = append(subParts, subPartsDirs...)
+			}
+
+			parts = append(parts, subParts...)
+		}
 	}
 
-	err = os.Remove(audioBookName + ".mp3")
-	if err != nil {
-		fmt.Println(err)
-	}
+	return parts, nil
 }
